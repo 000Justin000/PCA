@@ -1,4 +1,4 @@
-include /home/junteng/lib/ARPACK/ARmake.inc
+include /home/junteng/lib/arpack/ARPACK/ARmake.inc
 
 ppca: ppca.o
 	$(PFC) $(PFFLAGS) ppca.o $(PLIBS) -o ppca.x

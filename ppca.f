@@ -25,9 +25,6 @@ c              Ritz vectors.
 c     pdnorm2  Parallel version of Level 1 BLAS that computes the norm of a vector.
 c     daxpy    Level 1 BLAS that computes y <- alpha*x+y.
 c     av       Matrix vector multiplication routine that computes A*x.
-c     tv       Matrix vector multiplication routine that computes T*x, 
-c              where T is a tridiagonal matrix.  It is used in routine
-c              av.
 c
 c\Author
 c     Richard Lehoucq
@@ -37,6 +34,7 @@ c     Dept. of Computational &
 c     Applied Mathematics
 c     Rice University
 c     Houston, Texas
+c     Junteng Jia
 c
 c\Parallel Modifications
 c     Kristi Maschhoff
@@ -63,24 +61,24 @@ c     %---------------%
  
       integer           comm, myid, nprocs, rc, nloc
 c
-c     %-----------------------------%
-c     | Define leading dimensions   |
-c     | for all arrays.             |
-c     | MAXN:   Maximum dimension   |
-c     |         of the A allowed.   |
-c     | MAXNEV: Maximum NEV allowed |
-c     | MAXNCV: Maximum NCV allowed |
-c     %-----------------------------%
+c     %-------------------------------%
+c     | Define leading dimensions     |
+c     | for all arrays.               |
+c     | MAXNLOC: Maximum dimension of |
+c     |          the local A allowed. |
+c     | MAXNEV:  Maximum NEV allowed  |
+c     | MAXNCV:  Maximum NCV allowed  |
+c     %-------------------------------%
 c
       integer          maxnloc, maxnev, maxncv, ldv
-      parameter       (maxnloc=256, maxnev=10, maxncv=25, 
+      parameter       (maxnloc=10000, maxnev=1000, maxncv=1100, 
      &                 ldv=maxnloc )
 c
 c     %--------------%
 c     | Local Arrays |
 c     %--------------%
 c
-      Double precision
+      double precision
      &                 v(ldv,maxncv), workl(maxncv*(maxncv+8)),
      &                 workd(3*maxnloc), d(maxncv,2), resid(maxnloc),
      &                 ax(maxnloc)
@@ -95,15 +93,15 @@ c
       integer          ido, n, nev, ncv, lworkl, info, ierr, j, 
      &                 nx, nconv, maxitr, mode, ishfts
       logical          rvec
-      Double precision      
+      double precision      
      &                 tol, sigma
 c
 c     %----------------------------------------------%
-c     | Local Buffers needed for MPI communication |
+c     | Local Buffers needed for MPI communication   |
 c     %----------------------------------------------%
 c
-      Double precision
-     &                  mv_buf(maxnloc)
+      double precision
+     &                  mpi_buf(300000)
 c
 c     %------------%
 c     | Parameters |
@@ -117,7 +115,7 @@ c     %-----------------------------%
 c     | BLAS & LAPACK routines used |
 c     %-----------------------------%
 c
-      Double precision           
+      double precision           
      &                 pdnorm2 
       external         pdnorm2, daxpy
 c
@@ -126,6 +124,13 @@ c     | Intrinsic Functions |
 c     %---------------------%
 c
       intrinsic         abs
+
+c
+c     %-------------------%
+c     | Covariance Matrix |
+c     %-------------------%
+c
+      real(kind=8), allocatable ::  covmat_loc(:,:)
 c
 c     %-----------------------%
 c     | Executable Statements |
@@ -140,34 +145,36 @@ c
       logfil = 6
       msaupd = 1
 c
-c     %----------------------------------------------------%
-c     | The number NX is the number of interior points     |
-c     | in the discretization of the 2-dimensional         |
-c     | Laplacian on the unit square with zero Dirichlet   |
-c     | boundary condition.  The number N(=NX*NX) is the   |
-c     | dimension of the matrix.  A standard eigenvalue    |
-c     | problem is solved (BMAT = 'I'). NEV is the number  |
-c     | of eigenvalues to be approximated.  The user can   |
-c     | modify NEV, NCV, WHICH to solve problems of        |
-c     | different sizes, and to get different parts of the |
-c     | spectrum.  However, The following conditions must  |
-c     | be satisfied:                                      |
-c     |                   N <= MAXN,                       | 
-c     |                 NEV <= MAXNEV,                     |
-c     |             NEV + 2 <= NCV <= MAXNCV               | 
-c     %----------------------------------------------------% 
+c     %-------------------------------------------------------%
+c     | The number N(=NX*NX) is the dimension of the matrix.  |
+c     | A standard eigenvalue problem is solved (BMAT = 'I'). | 
+c     | NEV is the number of eigenvalues to be approximated.  |
+c     | The user can modify NEV, NCV, WHICH to solve problems |
+c     | of different sizes, and to get different parts of the |
+c     | spectrum.  However, The following conditions must be  |
+c     | satisfied:                                            |
+c     |                   N <= MAXN,                          | 
+c     |                 NEV <= MAXNEV,                        |
+c     |             NEV + 2 <= NCV <= MAXNCV                  | 
+c     %-------------------------------------------------------% 
 c
-      nx = 10
-      n = nx*nx
-      nev =  4 
-      ncv =  20 
+      n   =   625     ! 107207
+      nev =   100     ! 1000
+      ncv =   200     ! 1100
+
 c
 c     %--------------------------------------%
 c     | Set up distribution of data to nodes |
 c     %--------------------------------------%
 c
-      nloc = (nx / nprocs)*nx
-      if ( mod(nx, nprocs) .gt. myid ) nloc = nloc + nx
+      nloc = n / nprocs
+      if ( mod(n, nprocs) .ne. 0 ) then
+         nloc = nloc + 1
+        
+         if ( myid .eq. nprocs - 1 ) then
+            nloc = mod(n, nloc)
+         end if
+      end if
 c
       if ( nloc .gt. maxnloc ) then
          print *, ' ERROR with _SDRV1: NLOC is greater than MAXNLOC '
@@ -180,7 +187,10 @@ c
          go to 9000
       end if
       bmat = 'I'
-      which = 'SM'
+      which = 'LM'
+c
+      allocate( covmat_loc(n, nloc) )
+      call read_cov( comm, n, nloc, covmat_loc )
 c
 c     %--------------------------------------------------%
 c     | The work array WORKL is used in PSSAUPD as       |
@@ -210,7 +220,7 @@ c     | documentation in PSSAUPD.                         |
 c     %---------------------------------------------------%
 c
       ishfts = 1
-      maxitr = 300
+      maxitr = 1000
       mode   = 1
 c      
       iparam(1) = ishfts 
@@ -221,6 +231,8 @@ c     %-------------------------------------------%
 c     | M A I N   L O O P (Reverse communication) |
 c     %-------------------------------------------%
 c
+c
+
  10   continue
 c
 c        %---------------------------------------------%
@@ -231,8 +243,8 @@ c        | has been exceeded.                          |
 c        %---------------------------------------------%
 c
          call pdsaupd ( comm, ido, bmat, nloc, which, nev, tol, resid, 
-     &                 ncv, v, ldv, iparam, ipntr, workd, workl,
-     &                 lworkl, info )
+     &                  ncv, v, ldv, iparam, ipntr, workd, workl,
+     &                  lworkl, info )
 c
          if (ido .eq. -1 .or. ido .eq. 1) then
 c
@@ -246,8 +258,8 @@ c           | the input, and return the result to  |
 c           | workd(ipntr(2)).                     |
 c           %--------------------------------------%
 c
-            call av ( comm, nloc, nx, mv_buf, 
-     &               workd(ipntr(1)), workd(ipntr(2)))
+            call av ( comm, n, nloc, covmat_loc, mpi_buf, 
+     &                workd(ipntr(1)), workd(ipntr(2)) )
 c
 c           %-----------------------------------------%
 c           | L O O P   B A C K to call PSSAUPD again.|
@@ -290,10 +302,10 @@ c        %-------------------------------------------%
 c           
          rvec = .true.
 c
-         call pdseupd ( comm, rvec, 'All', select, 
-     &        d, v, ldv, sigma, 
-     &        bmat, nloc, which, nev, tol, resid, ncv, v, ldv, 
-     &        iparam, ipntr, workd, workl, lworkl, ierr )
+         call pdseupd ( comm, rvec, 'All', select, d, v, 
+     &        ldv, sigma, bmat, nloc, which, nev, tol, 
+     &        resid, ncv, v, ldv, iparam, ipntr, workd, 
+     &        workl, lworkl, ierr )
 c        %----------------------------------------------%
 c        | Eigenvalues are returned in the first column |
 c        | of the two dimensional array D and the       |
@@ -323,6 +335,7 @@ c
          else
 c
              nconv =  iparam(5)
+c
              do 20 j=1, nconv
 c
 c               %---------------------------%
@@ -338,9 +351,11 @@ c               | accurate to the requested |
 c               | tolerance)                |
 c               %---------------------------%
 c
-                call av(comm, nloc, nx, mv_buf, v(1,j), ax)
+                call av(comm, n, nloc, covmat_loc, mpi_buf, v(1, j), ax)
                 call daxpy(nloc, -d(j,1), v(1,j), 1, ax, 1)
                 d(j,2) = pdnorm2( comm, nloc, ax, 1 )
+                if (myid .eq. 0) 
+     &              write (*,*) "eigenvalue No.", j, "=", d(j,1)
 c
  20          continue
 c
@@ -373,7 +388,7 @@ c
          print *, '====== '
          print *, ' '
          print *, ' Size of the matrix is ', n
-         print *, ' The number of processors is ', nprocs
+         print *, ' The number of processes is ', nprocs
          print *, ' The number of Ritz values requested is ', nev
          print *, ' The number of Arnoldi vectors generated',
      &            ' (NCV) is ', ncv
@@ -399,6 +414,7 @@ c
 c
       end
 c 
+c=========================================================================
 c ------------------------------------------------------------------
 c     parallel matrix vector subroutine
 c
@@ -408,97 +424,69 @@ c
 c     Computes w <--- OP*v, where OP is the nx*nx by nx*nx block
 c     tridiagonal matrix
 c
-c                  | T -I          |
-c                  |-I  T -I       |
-c             OP = |   -I  T       |
-c                  |        ...  -I|
-c                  |           -I T|
-c
-c     The subroutine TV is called to computed y<---T*x.
 c-------------------------------------------------------------------
 c
-      subroutine av (comm, nloc, nx, mv_buf, v, w)
+      subroutine av (comm, n, nloc, covmat_loc, mpi_buf, v, w)
 c
 c     .. MPI Declarations ...
       include           'mpif.h'
-      integer           comm, nprocs, myid, ierr,
-     &                  status(MPI_STATUS_SIZE)
-      integer           nloc, nx, np, j, lo, next, prev
-      Double precision
-     &                  v(nloc), w(nloc), mv_buf(nx), one
-      parameter         (one = 1.0 )
-      external          daxpy
- 
+      integer           comm, nprocs, myid, ierr
+      integer           nloc, itr, gather_size
+      double precision
+     &                  v(nloc), w(nloc), mpi_buf(300000),
+     &                  covmat_loc(n, nloc), sumv
+c
       call MPI_COMM_RANK( comm, myid, ierr )
       call MPI_COMM_SIZE( comm, nprocs, ierr )
 c
-      np = nloc/nx
-      call tv(nx,v(1),w(1))
-      call daxpy(nx, -one, v(nx+1), 1, w(1), 1)
-c
-      if ( np .gt. 2) then
-         do 10 j = 2, np-1
-            lo = (j-1)*nx
-            call tv(nx, v(lo+1), w(lo+1))
-            call daxpy(nx, -one, v(lo-nx+1), 1, w(lo+1), 1)
-            call daxpy(nx, -one, v(lo+nx+1), 1, w(lo+1), 1)
-  10     continue
+      gather_size = n / nprocs
+      if ( mod(n, nprocs) .ne. 0 ) then
+         gather_size = gather_size + 1
       end if
 c
-      if ( np .gt. 1) then
-         lo = (np-1)*nx
-         call tv(nx, v(lo+1), w(lo+1))
-         call daxpy(nx, -one, v(lo-nx+1), 1, w(lo+1), 1)
-      end if
+      call MPI_ALLGATHER( v, gather_size, MPI_DOUBLE, mpi_buf, 
+     &                    gather_size, MPI_DOUBLE, comm, ierr)
 c
-      next = myid + 1
-      prev = myid - 1
-      if ( myid .lt. nprocs-1 ) then
-         call mpi_send( v((np-1)*nx+1), nx, MPI_DOUBLE_PRECISION,
-     &                  next, myid+1, comm, ierr )
-      endif
-      if ( myid .gt. 0 ) then
-         call mpi_recv( mv_buf, nx, MPI_DOUBLE_PRECISION, prev, myid,
-     &                  comm, status, ierr )
-         call daxpy( nx, -one, mv_buf, 1, w(1), 1 )
-      endif
-c
-      if ( myid .gt. 0 ) then
-         call mpi_send( v(1), nx, MPI_DOUBLE_PRECISION,
-     &                  prev, myid-1, comm, ierr )
-      endif
-      if ( myid .lt. nprocs-1 ) then
-         call mpi_recv( mv_buf, nx, MPI_DOUBLE_PRECISION, next, myid,
-     &                  comm, status, ierr )
-         call daxpy( nx, -one, mv_buf, 1, w(lo+1), 1 )
-      endif
-c
+      DO itr = 1, nloc
+        w(itr) = dot_product(covmat_loc(:,itr),mpi_buf(1:n)) 
+      END DO
+    
       return
       end
 c=========================================================================
-      subroutine tv (nx, x, y)
+
+c=========================================================================
+c ------------------------------------------------------------------
+c     parallel read covariance matrix
+c-------------------------------------------------------------------
 c
-      integer           nx, j 
-      Double precision
-     &                  x(nx), y(nx), dd, dl, du
+      subroutine read_cov (comm, n, nloc, covmat_loc)
 c
-      Double precision
-     &                 one
-      parameter        (one = 1.0 )
+c     .. MPI Declarations ...
 c
-c     Compute the matrix vector multiplication y<---T*x
-c     where T is a nx by nx tridiagonal matrix with DD on the 
-c     diagonal, DL on the subdiagonal, and DU on the superdiagonal.
-c     
+      include           'mpif.h'
+      integer           comm, myid, nprocs, ierr
+      integer           n, nloc
+      integer           itr
+      double precision
+     &                  covmat_loc(n, nloc)
+      integer           my_unit
+      character         my_file*20
+
 c
-      dd  = 4.0
-      dl  = -one 
-      du  = -one
-c 
-      y(1) =  dd*x(1) + du*x(2)
-      do 10 j = 2,nx-1
-         y(j) = dl*x(j-1) + dd*x(j) + du*x(j+1) 
- 10   continue 
-      y(nx) =  dl*x(nx-1) + dd*x(nx) 
+      call MPI_COMM_RANK( comm, myid, ierr )
+c
+c      WRITE (my_file, "(A, I1)") "covmat", myid
+      WRITE (my_file, "(A, I1)") "result", myid
+
+      my_unit = myid
+      
+      OPEN (UNIT=my_unit, FILE=my_file)
+      
+      READ (my_unit, *) covmat_loc
+
+      CLOSE (my_unit)
+
       return
       end
+c=========================================================================
