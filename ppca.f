@@ -476,8 +476,8 @@ c
 c
       call MPI_COMM_RANK( comm, myid, ierr )
 c
-c      WRITE (my_file, "(A, I1)") "covmat", myid
-      WRITE (my_file, "(A, I1)") "result", myid
+      WRITE (my_file, "(A, I1)") "covmat", myid
+c      WRITE (my_file, "(A, I1)") "result", myid
 
       my_unit = myid
       
