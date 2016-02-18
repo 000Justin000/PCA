@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include "mpi.h"
+#include "omp.h"
 
  
 
@@ -51,11 +52,11 @@ std::vector<double> partialSum(std::vector< std::vector<double> >& mydata)
 
 
 // F3
-void sleep(unsigned int mseconds)
-{
-    clock_t goal = mseconds + clock();
-    while (goal > clock());
-}
+//void sleep(unsigned int mseconds)
+//{
+//    clock_t goal = mseconds + clock();
+//    while (goal > clock());
+//}
 
 
 
@@ -145,8 +146,9 @@ int main(int argc, char** argv)
     {
         int data_No = (iproc + nproc - i) % nproc;
         
-        for (int j = 0; j < all_vector_count[data_No]; j++)
-            for (int k = 0; k < my_covmat_row; k++)
+        #pragma omp parallel for
+        for (int k = 0; k < my_covmat_row; k++)
+            for (int j = 0; j < all_vector_count[data_No]; j++)
                 for (int l = 0; l < vector_dim; l++)
                     my_covmat[k][l] += mydata[j][iproc*block_size+k] * mydata[j][l];
 
@@ -155,6 +157,9 @@ int main(int argc, char** argv)
             std::vector<double> sendbuf = mydata[j];
             MPI_Sendrecv(&sendbuf[0], vector_dim, MPI_DOUBLE, next_rank, iproc, &mydata[j][0], vector_dim, MPI_DOUBLE, prev_rank, prev_rank, MPI_COMM_WORLD, &status);
         }
+
+        if (iproc == 0)
+            std::cout << "i=" << i << "finished" << std::endl;
     }
 
     std::ofstream fout;
@@ -162,7 +167,7 @@ int main(int argc, char** argv)
     for (int i = 0; i < my_covmat_row; i++)
     {
         for (int j = 0; j < vector_dim; j++)
-            fout << std::setw(15) << my_covmat[i][j];
+            fout << std::setw(15) << my_covmat[i][j] / (total_vector_count - 1);
         fout << std::endl;
     }
 
