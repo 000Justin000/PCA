@@ -71,7 +71,7 @@ c     | MAXNCV:  Maximum NCV allowed  |
 c     %-------------------------------%
 c
       integer          maxnloc, maxnev, maxncv, ldv
-      parameter       (maxnloc=10000, maxnev=1000, maxncv=1100, 
+      parameter       (maxnloc=10000, maxnev=1000, maxncv=2000, 
      &                 ldv=maxnloc )
 c
 c     %--------------%
@@ -91,7 +91,7 @@ c     %---------------%
 c
       character        bmat*1, which*2
       integer          ido, n, nev, ncv, lworkl, info, ierr, j, 
-     &                 nx, nconv, maxitr, mode, ishfts
+     &                 nx, nconv, maxitr, mode, ishfts, loop_counter
       logical          rvec
       double precision      
      &                 tol, sigma
@@ -158,9 +158,9 @@ c     |                 NEV <= MAXNEV,                        |
 c     |             NEV + 2 <= NCV <= MAXNCV                  | 
 c     %-------------------------------------------------------% 
 c
-      n   =   625     ! 107207
-      nev =   100     ! 1000
-      ncv =   200     ! 1100
+      n   =   109931     ! 109931
+      nev =      900     ! 1000
+      ncv =     1200     ! 1100
 
 c
 c     %--------------------------------------%
@@ -190,6 +190,7 @@ c
       which = 'LM'
 c
       allocate( covmat_loc(n, nloc) )
+
       call read_cov( comm, n, nloc, covmat_loc )
 c
 c     %--------------------------------------------------%
@@ -220,7 +221,7 @@ c     | documentation in PSSAUPD.                         |
 c     %---------------------------------------------------%
 c
       ishfts = 1
-      maxitr = 1000
+      maxitr = 2000
       mode   = 1
 c      
       iparam(1) = ishfts 
@@ -231,6 +232,8 @@ c     %-------------------------------------------%
 c     | M A I N   L O O P (Reverse communication) |
 c     %-------------------------------------------%
 c
+c
+      loop_counter = 0
 c
 
  10   continue
@@ -260,6 +263,10 @@ c           %--------------------------------------%
 c
             call av ( comm, n, nloc, covmat_loc, mpi_buf, 
      &                workd(ipntr(1)), workd(ipntr(2)) )
+c
+            loop_counter = loop_counter + 1
+            if (myid .eq. 0) 
+     &          write (*,*) "loop_counter = ", loop_counter
 c
 c           %-----------------------------------------%
 c           | L O O P   B A C K to call PSSAUPD again.|
@@ -479,7 +486,7 @@ c
       WRITE (my_file, "(A, I3)") "covmat", myid
 c      WRITE (my_file, "(A, I1)") "result", myid
 
-      my_unit = myid
+      my_unit = myid + 1000
       
       OPEN (UNIT=my_unit, FILE=my_file)
       
