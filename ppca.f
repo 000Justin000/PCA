@@ -158,9 +158,9 @@ c     |                 NEV <= MAXNEV,                        |
 c     |             NEV + 2 <= NCV <= MAXNCV                  | 
 c     %-------------------------------------------------------% 
 c
-      n   =   109931     ! 109931
-      nev =      900     ! 1000
-      ncv =     1200     ! 1100
+      n   =      626     ! 109931
+      nev =      100     ! 1000
+      ncv =      200     ! 1100
 
 c
 c     %--------------------------------------%
@@ -324,6 +324,7 @@ c        | corresponding to the eigenvalues in D is     |
 c        | returned in V.                               |
 c        %----------------------------------------------%
 c
+c
          if ( ierr .ne. 0) then
 c
 c            %------------------------------------%
@@ -340,6 +341,8 @@ c
             endif
 c
          else
+c
+             call write_eigvs (comm, nev, nloc, v, ldv, maxncv)
 c
              nconv =  iparam(5)
 c
@@ -361,8 +364,6 @@ c
                 call av(comm, n, nloc, covmat_loc, mpi_buf, v(1, j), ax)
                 call daxpy(nloc, -d(j,1), v(1,j), 1, ax, 1)
                 d(j,2) = pdnorm2( comm, nloc, ax, 1 )
-                if (myid .eq. 0) 
-     &              write (*,*) "eigenvalue No.", j, "=", d(j,1)
 c
  20          continue
 c
@@ -484,13 +485,55 @@ c
       call MPI_COMM_RANK( comm, myid, ierr )
 c
       WRITE (my_file, "(A, I3)") "covmat", myid
-c      WRITE (my_file, "(A, I1)") "result", myid
 
       my_unit = myid + 1000
       
       OPEN (UNIT=my_unit, FILE=my_file)
       
       READ (my_unit, *) covmat_loc
+
+      CLOSE (my_unit)
+
+      return
+      end
+c=========================================================================
+
+c=========================================================================
+c ------------------------------------------------------------------
+c     parallel write eigenvectors
+c-------------------------------------------------------------------
+c
+      subroutine write_eigvs (comm, nev, nloc, v, ldv, maxncv)
+c
+c     .. MPI Declarations ...
+c
+      include           'mpif.h'
+      integer           comm, myid, nprocs, ierr
+      integer           n, nloc
+      integer           itr, jtr
+      double precision
+     &                  v(ldv, maxncv)
+      integer           my_unit
+      character         my_file*20
+
+c
+      call MPI_COMM_RANK( comm, myid, ierr )
+c
+      WRITE (my_file, "(A, I3)") "eigvs", myid
+
+      my_unit = myid + 2000
+      
+      OPEN (UNIT=my_unit, FILE=my_file)
+
+      DO itr = 1, nev
+        !
+        DO jtr = 1, nloc
+          WRITE(my_unit, "(ES15.6)", advance="no") v(jtr, itr)
+        END DO
+        !
+        WRITE(my_unit, "(A)") ""
+        !
+      END DO
 
       CLOSE (my_unit)
 

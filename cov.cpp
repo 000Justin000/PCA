@@ -6,8 +6,8 @@
 #include <vector>
 #include <stdlib.h>
 #include <time.h>
+#include <omp.h>
 #include "mpi.h"
-#include "omp.h"
 
  
 
